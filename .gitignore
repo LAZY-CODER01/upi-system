@@ -1,0 +1,37 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# MacOS
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Application secrets
+application-local.properties
+.env
+
+# Build files
+build/
+
+# Temporary files
+*.tmp
+*.swp
+
+# Generated files
+out/
+
+# Java
+*.class
+
+# Spring Boot
+spring.log
