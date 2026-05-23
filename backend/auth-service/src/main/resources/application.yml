@@ -18,4 +18,4 @@ spring:
         format_sql: true
 
 jwt:
-  secret: veryStrongSecretKeyForJwtAuthentication123456
+  secret: mySuperSecureJwtSecretKeyForUpiSystem123456789
