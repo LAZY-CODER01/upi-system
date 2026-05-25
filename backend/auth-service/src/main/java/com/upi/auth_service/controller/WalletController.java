@@ -1,11 +1,15 @@
 package com.upi.auth_service.controller;
 
-import com.upi.auth_service.dto.TransferRequest;
-import com.upi.auth_service.entity.Wallet;
+import com.upi.auth_service.dto.*;
 import com.upi.auth_service.service.WalletService;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,56 +22,59 @@ public class WalletController {
 
     private final WalletService walletService;
 
+    /** Create a wallet for the authenticated user. Returns 201 Created on success. */
     @PostMapping("/create")
-    public Wallet createWallet(
-            Authentication authentication
-    ) {
-
-        return walletService.createWallet(authentication);
+    public ResponseEntity<ApiResponse<WalletResponse>> createWallet(Authentication authentication) {
+        WalletResponse wallet = walletService.createWallet(authentication);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Wallet created successfully.", wallet));
     }
 
+    /** Retrieve the current balance for the authenticated user's wallet. */
     @GetMapping("/balance")
-    public BigDecimal balance(
-            Authentication authentication
-    ) {
-
-        return walletService.getBalance(authentication);
+    public ResponseEntity<ApiResponse<BalanceResponse>> balance(Authentication authentication) {
+        BalanceResponse balance = walletService.getBalance(authentication);
+        return ResponseEntity.ok(ApiResponse.success(balance));
     }
 
+    /** Add money to the authenticated user's wallet. */
     @PostMapping("/add-money")
-    public String addMoney(
+    public ResponseEntity<ApiResponse<Void>> addMoney(
             Authentication authentication,
-            @RequestParam BigDecimal amount
+            @RequestParam
+            @NotNull(message = "Amount must not be null")
+            @DecimalMin(value = "0.01", message = "Amount must be at least 0.01")
+            BigDecimal amount
     ) {
-
-        return walletService.addMoney(
-                authentication,
-                amount
-        );
+        walletService.addMoney(authentication, amount);
+        return ResponseEntity.ok(ApiResponse.success("Money added successfully.", null));
     }
 
+    /**
+     * Transfer money to another user.
+     *
+     * <p>Optionally supply {@code X-Idempotency-Key} header to prevent duplicate submissions.
+     * The same key within the system's TTL window will return 409 Conflict.
+     */
     @PostMapping("/transfer")
-    public String transfer(
+    public ResponseEntity<ApiResponse<TransferResponse>> transfer(
             Authentication authentication,
-            @RequestBody TransferRequest request
+            @Valid @RequestBody TransferRequest request,
+            @RequestHeader(value = "X-Idempotency-Key", required = false) String idempotencyKey
     ) {
-
-        return walletService.transferMoney(
-                authentication,
-                request
-        );
+        TransferResponse result = walletService.transferMoney(authentication, request, idempotencyKey);
+        return ResponseEntity.ok(ApiResponse.success("Transfer completed successfully.", result));
     }
+
+    /** Retrieve paginated transaction history for the authenticated user. */
     @GetMapping("/transactions")
-    public Object transactions(
+    public ResponseEntity<ApiResponse<PagedResponse<TransactionResponse>>> transactions(
             Authentication authentication,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "5") int size
+            @RequestParam(defaultValue = "10") int size
     ) {
-
-        return walletService.getTransactions(
-                authentication,
-                page,
-                size
-        );
+        PagedResponse<TransactionResponse> result = walletService.getTransactions(authentication, page, size);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 }

@@ -5,9 +5,11 @@ import com.upi.auth_service.dto.LoginRequest;
 import com.upi.auth_service.dto.RegisterRequest;
 import com.upi.auth_service.entity.Role;
 import com.upi.auth_service.entity.User;
+import com.upi.auth_service.exception.BusinessException;
 import com.upi.auth_service.repository.UserRepository;
 import com.upi.auth_service.security.JwtService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -22,13 +24,12 @@ public class AuthService {
     private final JwtService jwtService;
 
     public AuthResponse register(RegisterRequest request) {
-
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already exists");
+            throw new BusinessException("An account with this email address already exists.", HttpStatus.CONFLICT);
         }
 
         if (userRepository.existsByPhone(request.getPhone())) {
-            throw new RuntimeException("Phone already exists");
+            throw new BusinessException("An account with this phone number already exists.", HttpStatus.CONFLICT);
         }
 
         User user = User.builder()
@@ -43,27 +44,18 @@ public class AuthService {
         userRepository.save(user);
 
         String token = jwtService.generateToken(user.getEmail());
-
         return new AuthResponse(token);
     }
 
     public AuthResponse login(LoginRequest request) {
-
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() ->
-                        new RuntimeException("Invalid credentials"));
+                .orElseThrow(() -> new BusinessException("Invalid email or password.", HttpStatus.UNAUTHORIZED));
 
-        boolean matches = passwordEncoder.matches(
-                request.getPassword(),
-                user.getPassword()
-        );
-
-        if (!matches) {
-            throw new RuntimeException("Invalid credentials");
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            throw new BusinessException("Invalid email or password.", HttpStatus.UNAUTHORIZED);
         }
 
         String token = jwtService.generateToken(user.getEmail());
-
         return new AuthResponse(token);
     }
 }

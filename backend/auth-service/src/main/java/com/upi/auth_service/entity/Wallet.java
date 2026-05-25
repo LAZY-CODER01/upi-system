@@ -19,12 +19,22 @@ public class Wallet {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @OneToOne
-    @JoinColumn(name = "user_id")
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false, unique = true)
     private User user;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 19, scale = 4)
     private BigDecimal balance;
 
+    /**
+     * Optimistic locking version — automatically incremented on every update.
+     * Any concurrent modification will throw OptimisticLockingFailureException
+     * which is caught and re-mapped to a 409 Conflict by the global handler.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    @Column(nullable = false)
     private LocalDateTime createdAt;
 }
