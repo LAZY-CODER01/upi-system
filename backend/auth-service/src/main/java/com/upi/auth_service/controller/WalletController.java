@@ -57,4 +57,17 @@ public class WalletController {
                 request
         );
     }
+    @GetMapping("/transactions")
+    public Object transactions(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "5") int size
+    ) {
+
+        return walletService.getTransactions(
+                authentication,
+                page,
+                size
+        );
+    }
 }

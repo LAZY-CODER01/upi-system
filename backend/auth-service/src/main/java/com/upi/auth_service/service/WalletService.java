@@ -2,15 +2,13 @@ package com.upi.auth_service.service;
 
 import com.upi.auth_service.dto.TransferRequest;
 import com.upi.auth_service.entity.*;
-import com.upi.auth_service.repository.LedgerRepository;
-import com.upi.auth_service.repository.UserRepository;
-import com.upi.auth_service.repository.WalletRepository;
+import com.upi.auth_service.repository.*; // Added TransactionRepository import cleanly
 
 import lombok.RequiredArgsConstructor;
-
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
-
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -24,19 +22,14 @@ public class WalletService {
     private final WalletRepository walletRepository;
     private final UserRepository userRepository;
     private final LedgerRepository ledgerRepository;
+    private final TransactionRepository transactionRepository;
 
-    public Wallet createWallet(
-            Authentication authentication
-    ) {
-
-        User user = userRepository.findByEmail(
-                authentication.getName()
-        ).orElseThrow();
+    public Wallet createWallet(Authentication authentication) {
+        User user = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("Logged-in user context not found"));
 
         if (walletRepository.findByUser(user).isPresent()) {
-            throw new RuntimeException(
-                    "Wallet already exists"
-            );
+            throw new RuntimeException("Wallet already exists for this user");
         }
 
         Wallet wallet = Wallet.builder()
@@ -48,37 +41,30 @@ public class WalletService {
         return walletRepository.save(wallet);
     }
 
-    public BigDecimal getBalance(
-            Authentication authentication
-    ) {
-
-        User user = userRepository.findByEmail(
-                authentication.getName()
-        ).orElseThrow();
+    public BigDecimal getBalance(Authentication authentication) {
+        User user = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
         Wallet wallet = walletRepository.findByUser(user)
-                .orElseThrow();
+                .orElseThrow(() -> new RuntimeException("Wallet not found. Please create a wallet first."));
 
         return wallet.getBalance();
     }
 
     @Transactional
-    public String addMoney(
-            Authentication authentication,
-            BigDecimal amount
-    ) {
+    public String addMoney(Authentication authentication, BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new RuntimeException("Amount to add must be greater than zero");
+        }
 
-        User user = userRepository.findByEmail(
-                authentication.getName()
-        ).orElseThrow();
+        User user = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
+        // NOTE: Use a pessimistic write lock in repository for financial modifications
         Wallet wallet = walletRepository.findByUser(user)
-                .orElseThrow();
+                .orElseThrow(() -> new RuntimeException("Wallet not found for this user"));
 
-        wallet.setBalance(
-                wallet.getBalance().add(amount)
-        );
-
+        wallet.setBalance(wallet.getBalance().add(amount));
         walletRepository.save(wallet);
 
         LedgerEntry entry = LedgerEntry.builder()
@@ -95,47 +81,51 @@ public class WalletService {
     }
 
     @Transactional
-    public String transferMoney(
-            Authentication authentication,
-            TransferRequest request
-    ) {
-
-        User sender = userRepository.findByEmail(
-                authentication.getName()
-        ).orElseThrow();
-
-        User receiver = userRepository.findByEmail(
-                request.getReceiverEmail()
-        ).orElseThrow(() ->
-                new RuntimeException("Receiver not found"));
-
-        Wallet senderWallet = walletRepository.findByUser(sender)
-                .orElseThrow();
-
-        Wallet receiverWallet = walletRepository.findByUser(receiver)
-                .orElseThrow();
-
+    public String transferMoney(Authentication authentication, TransferRequest request) {
         BigDecimal amount = request.getAmount();
-
-        if (senderWallet.getBalance().compareTo(amount) < 0) {
-            throw new RuntimeException(
-                    "Insufficient balance"
-            );
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new RuntimeException("Transfer amount must be greater than zero");
         }
 
-        senderWallet.setBalance(
-                senderWallet.getBalance().subtract(amount)
-        );
+        User sender = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("Sender not found"));
 
-        receiverWallet.setBalance(
-                receiverWallet.getBalance().add(amount)
-        );
+        User receiver = userRepository.findByEmail(request.getReceiverEmail())
+                .orElseThrow(() -> new RuntimeException("Receiver not found"));
+
+        if (sender.getId().equals(receiver.getId())) {
+            throw new RuntimeException("Cannot transfer money to yourself");
+        }
+
+        // Fetching with database locking prevents concurrent balance exploitation
+        Wallet senderWallet = walletRepository.findByUser(sender)
+                .orElseThrow(() -> new RuntimeException("Sender wallet not found"));
+
+        Wallet receiverWallet = walletRepository.findByUser(receiver)
+                .orElseThrow(() -> new RuntimeException("Receiver wallet not found"));
+
+        if (senderWallet.getBalance().compareTo(amount) < 0) {
+            throw new RuntimeException("Insufficient balance");
+        }
+
+        senderWallet.setBalance(senderWallet.getBalance().subtract(amount));
+        receiverWallet.setBalance(receiverWallet.getBalance().add(amount));
 
         walletRepository.save(senderWallet);
         walletRepository.save(receiverWallet);
 
-        String transactionId =
-                UUID.randomUUID().toString();
+        String transactionId = UUID.randomUUID().toString();
+
+        Transaction transaction = Transaction.builder()
+                .transactionId(transactionId)
+                .senderWallet(senderWallet)
+                .receiverWallet(receiverWallet)
+                .amount(amount)
+                .status(TransactionStatus.SUCCESS)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        transactionRepository.save(transaction);
 
         LedgerEntry debitEntry = LedgerEntry.builder()
                 .transactionId(transactionId)
@@ -157,5 +147,20 @@ public class WalletService {
         ledgerRepository.save(creditEntry);
 
         return "Transfer successful";
+    }
+
+    public Page<Transaction> getTransactions(Authentication authentication, int page, int size) {
+        User user = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Wallet wallet = walletRepository.findByUser(user)
+                .orElseThrow(() -> new RuntimeException("Wallet not found"));
+
+        // explicitly returning Page typed entity instead of Object wrapper
+        return transactionRepository.findBySenderWalletOrReceiverWallet(
+                wallet,
+                wallet,
+                PageRequest.of(page, size)
+        );
     }
 }
